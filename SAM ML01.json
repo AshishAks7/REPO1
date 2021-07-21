@@ -1,0 +1,540 @@
+{
+	"properties": {},
+	"groupResources": {
+		"limits": {
+			"cpu": "1000m",
+			"memory": "8G"
+		},
+		"requests": {
+			"cpu": "500m",
+			"memory": "256Mi"
+		}
+	},
+	"description": "SaM ML Batch Interfile ML01",
+	"processes": {
+		"python3operator2": {
+			"component": "com.sap.system.python3Operator",
+			"metadata": {
+				"label": "ML Processing",
+				"x": 823.9999952316284,
+				"y": 121.99999928474426,
+				"height": 82,
+				"width": 120,
+				"extensible": true,
+				"config": {
+					"script": "import pandas as pd\r\nimport json \r\nimport sys\r\n\r\n\r\n#from operators.com.sap.sam_ml.util.operator_util import get_model\r\n#from operators.EDT.SaM.util.Functions import get_model\r\nfrom operators.EDT.SaM.Functions import get_model,CalcStringSim\r\n\r\n# Global vars to keep track of model status\r\nmodel = None\r\nmodel_ready = False\r\nlst = []\r\n\r\n# retrieve Model's technical ID from SAP DI Lake via Scenario ID\r\nmodel = get_model(api.config.ScenarioID)\r\nmodel_ready = True\r\n\r\n\r\n# current functions runs per package id\r\n# ML model runs per package Id (iteratively if several package_id are sent to input)\r\ndef on_input(input):\r\n\r\n    try:\r\n        # attribute.msg.success/error\r\n        if input.attributes[\"message.error\"] != True:\r\n            \r\n            # Check if Model_ready status is true\r\n            if model_ready:\r\n                obj = input.body\r\n                ML_Output= pd.DataFrame(obj)\r\n                result = ML_Output.empty\r\n                if result == True:\r\n                #if input.body == Null:\r\n                    api.send(\"OutTest\",'Empty Package Data recieved, PackageID could not found')\r\n                    \r\n                else:\r\n                    # Package ID is fetching from input data.\r\n                    item = str(ML_Output.PACKAGE_ID[0])\r\n                    api.logger.info(\"Model ready and processing start\")\r\n                    sql = 'UPDATE \"DATA_SAM_USER\".\"SAM_PACKAGE_ML01\" set STATUS = ' \"'\"+'Model ready and processing start'+\"'\"+ 'WHERE PACKAGE_ID =' + item\r\n                    api.send(\"logs\",sql)\r\n                    cnt = str(ML_Output.count().PACKAGE_ID)\r\n                    msg = 'Next input dataset recieved for PackageID :' + item + ', Total input records :' + cnt\r\n                    api.send(\"OutTest\",msg)\r\n                    \r\n                    column_names = [\"NAME1_X\",\"NAME1_Y\",\"STD_FIRM_ONLY_X\",\"STD_FIRM_ONLY_Y\", \"STREET_X\", \"STREET_Y\",\"STD_LOCALITY_X\",\"STD_LOCALITY_Y\", \"STD_POSTCODE_FULL_X\" ,\"STD_POSTCODE_FULL_Y\"]\r\n                    data_to_predict = ML_Output[column_names]\r\n                    data_to_predict[column_names] = data_to_predict[column_names].astype(str)\r\n                    api.send(\"OutTest\",'Input preparation completed for PackageID :' + item)\r\n                      \r\n                    \r\n                # Get the string similarity score\r\n                \r\n                        \r\n                        \r\n                    CalcStringSim(data_to_predict)\r\n                    \r\n                    # filter columns that are needed\r\n                    nam_col = [\"C_N_jw\",\"C_F_jw\",\"C_ST_jw\",\"C_L_lev\",\"C_PC_jcc\"]\r\n                    data_to_predict = data_to_predict[nam_col]\r\n                    api.send(\"OutTest\",'String similarity calculation is completed for PackageID :' + item)  \r\n                    api.logger.info(\"String sim calculated\")\r\n                        \r\n                    # check if all needed columns for model are between 0 and 1\r\n                    mylist = []\r\n                    for i in range(0,len(nam_col)-1):\r\n                        mylist.append(data_to_predict.iloc[:,i].between(0,1).any())\r\n                        \r\n                    # only if all columns are truely between 0 and 1, execute model \r\n                    #api.send(\"OutTest\",'My list is completed')\r\n                    if all(mylist):\r\n                        \r\n                        api.logger.info(\"Data meets criteria, executing model\")\r\n                        #api.send(\"OutTest\",'Data meets critetia')    \r\n                        # check path\r\n                        \r\n                        prediction = model.predict_proba(data_to_predict)[:,1]\r\n                        ML_Output[\"ML_SCORE\"] = prediction\r\n                        ML_Output[\"LABEL\"]    = 1\r\n                        ML_Output[\"C_N_jw\"]   = data_to_predict[\"C_N_jw\"]\r\n                        ML_Output[\"C_F_jw\"]   = data_to_predict[\"C_F_jw\"]\r\n                        ML_Output[\"C_ST_jw\"]  = data_to_predict[\"C_ST_jw\"]\r\n                        ML_Output[\"C_L_lev\"]  = data_to_predict[\"C_L_lev\"]\r\n                        ML_Output[\"C_PC_jcc\"] = data_to_predict[\"C_PC_jcc\"]\r\n                        cnt = str(ML_Output.count().PACKAGE_ID)\r\n                        msg = 'Model execution completed for PackageID :' + item + ',total result records are:' + cnt\r\n                        api.send(\"OutTest\",msg)\r\n                        api.logger.info(\"Model execution completed\")\r\n                        sql = 'UPDATE \"DATA_SAM_USER\".\"SAM_PACKAGE_ML01\" set STATUS = ' \"'\"+'Model execution completed'+\"'\"+ 'WHERE PACKAGE_ID =' + item\r\n                        api.send(\"logs\",sql)\r\n                    \r\n                        obj = ML_Output.to_json(orient='records')\r\n                        api.send(\"output\", api.Message(body=obj))\r\n                        api.send(\"outp\", item)\r\n                    \r\n            else:\r\n                api.logger.info(\"Model has not reached the input port.\")\r\n                sql = 'UPDATE \"DATA_SAM_USER\".\"SAM_PACKAGE_ML01\" set STATUS = ' \"'\"+'Model has not reached input port'+\"'\"+ 'WHERE PACKAGE_ID =' + item\r\n                api.send(\"logs\",sql)\r\n              \r\n                \r\n        else:\r\n            sql = 'UPDATE \"DATA_SAM_USER\".\"SAM_PACKAGE_ML01\" set STATUS = ' \"'\"+'Input Aborted'+\"'\"+ 'WHERE PACKAGE_ID =' + item\r\n            api.send(\"logs\",sql)\r\n            api.logger.info(str(e))\r\n            api.logger.info('Executed ML Model: failed')\r\n    except:\r\n        e = sys.exc_info()[0]\r\n        obj = input.body\r\n        ML_Output= pd.DataFrame(obj)\r\n        # Package ID get read from input data.\r\n        item = str(ML_Output.PACKAGE_ID[0])\r\n        \r\n        sql = 'UPDATE \"DATA_SAM_USER\".\"SAM_PACKAGE_ML01\" set STATUS = ' \"'\"+'Model Aborted'+\"'\"+ 'WHERE PACKAGE_ID =' + item\r\n        api.send(\"logs\",sql)\r\n        #api.send(\"logs\", api.Message(body=str(e)))\r\n        api.logger.info(str(e))\r\n        api.logger.info('Executed ML Model: failed')\r\n\r\n    \r\n#api.set_port_callback(\"input1\", on_input1)\r\n#api.set_port_callback(\"model\", on_model)\r\napi.set_port_callback(\"input\", on_input)",
+					"ScenarioID": "1aa387dc-830e-4584-801e-9393ec0a6021"
+				},
+				"additionalinports": [
+					{
+						"name": "input",
+						"type": "message"
+					},
+					{
+						"name": "input1",
+						"type": "string"
+					}
+				],
+				"additionaloutports": [
+					{
+						"name": "output",
+						"type": "message"
+					},
+					{
+						"name": "logs",
+						"type": "message"
+					},
+					{
+						"name": "outp",
+						"type": "string"
+					},
+					{
+						"name": "OutTest",
+						"type": "string"
+					}
+				]
+			}
+		},
+		"python3operator3": {
+			"component": "com.sap.system.python3Operator",
+			"metadata": {
+				"label": "Trigger Post Processing",
+				"x": 1024.999994277954,
+				"y": 176.99999904632568,
+				"height": 80,
+				"width": 120,
+				"extensible": true,
+				"config": {
+					"script": "from suds.client import Client\r\n\r\n#url = inputds;\r\nurl = api.config.url\r\n\r\n# scenarioId = api.config.ScenarioID    \r\n#    api.send(\"output\",url)\r\n\r\ndef oninput(item):\r\n    from suds.client import Client\r\n    i = str(item)\r\n    client = Client(url,timeout = 180)\r\n    client.set_options(port='Batch_Jobs')\r\n    res = client.service.JB_BT_SAM_Match_ML01_PostProcessing(i)\r\n    api.send(\"output\",i)\r\n\r\n    \r\napi.set_port_callback(\"input\", oninput)\r\n#api.set_port_callback(\"InputDS\", oninputds) \r\n",
+					"url": "${DS_SaM_IPS}"
+				},
+				"additionalinports": [
+					{
+						"name": "input",
+						"type": "string"
+					}
+				],
+				"additionaloutports": [
+					{
+						"name": "output",
+						"type": "message"
+					}
+				]
+			}
+		},
+		"saphanaclient1": {
+			"component": "com.sap.hana.client2",
+			"metadata": {
+				"label": "Extracting input data",
+				"x": 638.9999961853027,
+				"y": 122.99999928474426,
+				"height": 80,
+				"width": 120,
+				"config": {
+					"connection": {
+						"configurationType": "Configuration Manager",
+						"connectionID": "${ConID_SAM}"
+					},
+					"inputFormat": "JSON",
+					"tableColumns": [],
+					"networkBatchSize": 2000,
+					"terminateOnError": false,
+					"outputInBatches": false,
+					"transactionLevel": "Per statement"
+				}
+			}
+		},
+		"saphanaclient2": {
+			"component": "com.sap.hana.client2",
+			"metadata": {
+				"label": "Load ML Output",
+				"x": 1024.999994277954,
+				"y": 40,
+				"height": 80,
+				"width": 120,
+				"config": {
+					"connection": {
+						"configurationType": "Configuration Manager",
+						"connectionID": "${ConID_SAM}"
+					},
+					"tableName": "\"DATA_SAM_OUTPUT\".\"SAM_ML_OUTPUT\" ",
+					"tableColumns": [
+						{
+							"name": "\"PACKAGE_ID\"",
+							"type": "INTEGER"
+						},
+						{
+							"name": "\"SCORE\"",
+							"type": "DOUBLE"
+						},
+						{
+							"name": "\"ID_DCAC\"",
+							"type": "BIGINT"
+						},
+						{
+							"name": "\"NAME1_X\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"STD_FIRM_ONLY_X\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"STREET_X\"",
+							"type": "NVARCHAR",
+							"size": 510
+						},
+						{
+							"name": "\"STD_LOCALITY_X\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"STD_REGION_X\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"STD_POSTCODE_FULL_X\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"COUNTRY_X\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"ID_ACC\"",
+							"type": "BIGINT"
+						},
+						{
+							"name": "\"NAME1_Y\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"STD_FIRM_ONLY_Y\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"STREET_Y\"",
+							"type": "NVARCHAR",
+							"size": 510
+						},
+						{
+							"name": "\"STD_LOCALITY_Y\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"STD_REGION_Y\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"STD_POSTCODE_FULL_Y\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"COUNTRY_Y\"",
+							"type": "NVARCHAR",
+							"size": 255
+						},
+						{
+							"name": "\"ML_SCORE\"",
+							"type": "DOUBLE"
+						},
+						{
+							"name": "\"LABEL\"",
+							"type": "INTEGER"
+						},
+						{
+							"name": "\"C_N_JW\"",
+							"type": "DOUBLE"
+						},
+						{
+							"name": "\"C_F_JW\"",
+							"type": "DOUBLE"
+						},
+						{
+							"name": "\"C_ST_JW\"",
+							"type": "DOUBLE"
+						},
+						{
+							"name": "\"C_L_LEV\"",
+							"type": "DOUBLE"
+						},
+						{
+							"name": "\"C_PC_JCC\"",
+							"type": "DOUBLE"
+						}
+					],
+					"inputFormat": "JSON",
+					"terminateOnError": false
+				}
+			}
+		},
+		"saphanamonitor1": {
+			"component": "com.sap.hana.monitor2",
+			"metadata": {
+				"label": "SAP HANA Monitor",
+				"x": 12,
+				"y": 234.99999928474426,
+				"height": 80,
+				"width": 120,
+				"subengines": [
+					"main"
+				],
+				"config": {
+					"connection": {
+						"configurationType": "Configuration Manager",
+						"connectionID": "${ConID_SAM}"
+					},
+					"schemaName": "DATA_SAM_USER",
+					"tableMonitored": "SAM_PACKAGE_ML01",
+					"tableColumnNames": "PACKAGE_ID BIGINT, STATUS NVARCHAR(10), DIML_START_AT TIMESTAMP, DIML_END_AT TIMESTAMP",
+					"pollPeriodInMs": 1000,
+					"connectionTimeoutInMs": 10000
+				}
+			}
+		},
+		"tostringconverter1": {
+			"component": "com.sap.util.toStringConverter",
+			"metadata": {
+				"label": "ToString Converter",
+				"x": 229.49999904632568,
+				"y": 249.99999928474426,
+				"height": 50,
+				"width": 50,
+				"config": {}
+			}
+		},
+		"python3operator4": {
+			"component": "com.sap.system.python3Operator",
+			"metadata": {
+				"label": "Python3 Operator",
+				"x": 12,
+				"y": 114.99999928474426,
+				"height": 80,
+				"width": 120,
+				"extensible": true,
+				"config": {
+					"script": "# Timer at startup we will not terminate the graph on initial call to term()\ntimer = 1\n\ndef term():\n    global timer\n# terminate graph after two hours of running\n# Jenkins will restart it within 2 minutes\n    if (timer == 0):\n        api.send(\"output\", str(timer))\n    timer = 0\n\napi.add_timer(\"12h\", term)"
+				},
+				"additionaloutports": [
+					{
+						"name": "output",
+						"type": "string"
+					}
+				]
+			}
+		},
+		"graphterminator1": {
+			"component": "com.sap.util.graphTerminator",
+			"metadata": {
+				"label": "Graph Terminator",
+				"x": 196.99999904632568,
+				"y": 129.99999928474426,
+				"height": 80,
+				"width": 120,
+				"config": {}
+			}
+		},
+		"python3operator1": {
+			"component": "com.sap.system.python3Operator",
+			"metadata": {
+				"label": "Config Extraction",
+				"x": 377.99999809265137,
+				"y": 174.99999928474426,
+				"height": 80,
+				"width": 120,
+				"extensible": true,
+				"config": {
+					"script": "import json\n\ndata = []\n \ndef on_input(input1):\n    i = json.loads(input1)\n    for item in i:\n        p = item['PACKAGE_ID']\n        sql =  \"select * from DATA_SAM_INPUT.SAM_INPUT_ML01 where package_id =\" + str(p) +\";\"\n        api.send(\"output1\",sql)\n        api.send(\"output\",str(p))\n\n\n\napi.set_port_callback(\"input1\", on_input)"
+				},
+				"additionalinports": [
+					{
+						"name": "input1",
+						"type": "string"
+					}
+				],
+				"additionaloutports": [
+					{
+						"name": "output1",
+						"type": "message"
+					},
+					{
+						"name": "output",
+						"type": "string"
+					}
+				]
+			}
+		},
+		"saphanaclient3": {
+			"component": "com.sap.hana.client2",
+			"metadata": {
+				"label": "Status Update",
+				"x": 1285.9999923706055,
+				"y": 114.99999928474426,
+				"height": 80,
+				"width": 120,
+				"config": {
+					"connection": {
+						"configurationType": "Configuration Manager",
+						"connectionID": "${ConID_SAM}"
+					}
+				}
+			}
+		},
+		"wiretap3": {
+			"component": "com.sap.util.wiretap",
+			"metadata": {
+				"label": "Package Status",
+				"x": 1285.9999923706055,
+				"y": 234.99999928474426,
+				"height": 80,
+				"width": 120,
+				"ui": "dynpath",
+				"config": {}
+			}
+		},
+		"wiretap4": {
+			"component": "com.sap.util.wiretap",
+			"metadata": {
+				"label": "Package In",
+				"x": 565.999997138977,
+				"y": 337.9999985694885,
+				"height": 80,
+				"width": 120,
+				"ui": "dynpath",
+				"config": {}
+			}
+		}
+	},
+	"groups": [
+		{
+			"name": "group1",
+			"nodes": [
+				"python3operator2",
+				"python3operator3",
+				"saphanaclient1",
+				"saphanaclient2"
+			],
+			"metadata": {
+				"description": "Group"
+			},
+			"tags": {
+				"SaM_ML": "0.0.4"
+			},
+			"multiplicity": 3,
+			"resources": {
+				"limits": {
+					"memory": "8G"
+				},
+				"requests": {
+					"cpu": "256m",
+					"memory": "256M"
+				}
+			}
+		}
+	],
+	"connections": [
+		{
+			"metadata": {
+				"points": "283.4999990463257,274.99999928474426 344.9999985694885,274.99999928474426 344.9999985694885,214.99999928474426 372.99999809265137,214.99999928474426"
+			},
+			"src": {
+				"port": "outstring",
+				"process": "tostringconverter1"
+			},
+			"tgt": {
+				"port": "input1",
+				"process": "python3operator1"
+			}
+		},
+		{
+			"metadata": {
+				"points": "136,274.99999928474426 163.99999952316284,274.99999928474426 163.99999952316284,265.99999928474426 224.49999904632568,265.99999928474426"
+			},
+			"src": {
+				"port": "outResult",
+				"process": "saphanamonitor1"
+			},
+			"tgt": {
+				"port": "ininterface",
+				"process": "tostringconverter1"
+			}
+		},
+		{
+			"metadata": {
+				"points": "136,154.99999928474426 163.99999952316284,154.99999928474426 163.99999952316284,169.99999928474426 191.99999904632568,169.99999928474426"
+			},
+			"src": {
+				"port": "output",
+				"process": "python3operator4"
+			},
+			"tgt": {
+				"port": "stop",
+				"process": "graphterminator1"
+			}
+		},
+		{
+			"metadata": {
+				"points": "501.99999809265137,205.99999928474426 529.9999976158142,205.99999928474426 529.9999976158142,162.99999928474426 605.9999966621399,162.99999928474426 605.9999966621399,153.99999928474426 633.9999961853027,153.99999928474426"
+			},
+			"src": {
+				"port": "output1",
+				"process": "python3operator1"
+			},
+			"tgt": {
+				"port": "sql",
+				"process": "saphanaclient1"
+			}
+		},
+		{
+			"metadata": {
+				"points": "947.9999952316284,171.99999928474426 991.9999947547913,171.99999928474426 991.9999947547913,216.99999904632568 1019.9999942779541,216.99999904632568"
+			},
+			"src": {
+				"port": "outp",
+				"process": "python3operator2"
+			},
+			"tgt": {
+				"port": "input",
+				"process": "python3operator3"
+			}
+		},
+		{
+			"metadata": {
+				"points": "947.9999952316284,189.99999928474426 975.9999947547913,189.99999928474426 975.9999947547913,284.9999985694885 1176.999993801117,284.9999985694885 1176.999993801117,168.49999928474426 1252.9999928474426,168.49999928474426 1252.9999928474426,274.99999928474426 1280.9999923706055,274.99999928474426"
+			},
+			"src": {
+				"port": "OutTest",
+				"process": "python3operator2"
+			},
+			"tgt": {
+				"port": "in",
+				"process": "wiretap3"
+			}
+		},
+		{
+			"metadata": {
+				"points": "501.99999809265137,223.99999928474426 529.9999976158142,223.99999928474426 529.9999976158142,377.9999985694885 560.999997138977,377.9999985694885"
+			},
+			"src": {
+				"port": "output",
+				"process": "python3operator1"
+			},
+			"tgt": {
+				"port": "in",
+				"process": "wiretap4"
+			}
+		},
+		{
+			"metadata": {
+				"points": "762.9999961853027,162.99999928474426 790.9999957084656,162.99999928474426 790.9999957084656,153.99999928474426 818.9999952316284,153.99999928474426"
+			},
+			"src": {
+				"port": "result",
+				"process": "saphanaclient1"
+			},
+			"tgt": {
+				"port": "input",
+				"process": "python3operator2"
+			}
+		},
+		{
+			"metadata": {
+				"points": "947.9999952316284,153.99999928474426 975.9999947547913,153.99999928474426 975.9999947547913,147.99999952316284 1176.999993801117,147.99999952316284 1176.999993801117,157.49999928474426 1252.9999928474426,157.49999928474426 1252.9999928474426,145.99999928474426 1280.9999923706055,145.99999928474426"
+			},
+			"src": {
+				"port": "logs",
+				"process": "python3operator2"
+			},
+			"tgt": {
+				"port": "sql",
+				"process": "saphanaclient3"
+			}
+		},
+		{
+			"metadata": {
+				"points": "947.9999952316284,135.99999928474426 975.9999947547913,135.99999928474426 975.9999947547913,89 1019.9999942779541,89"
+			},
+			"src": {
+				"port": "output",
+				"process": "python3operator2"
+			},
+			"tgt": {
+				"port": "data",
+				"process": "saphanaclient2"
+			}
+		}
+	],
+	"inports": {},
+	"outports": {}
+}
