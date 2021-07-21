@@ -3,7 +3,7 @@
 	"groupResources": {
 		"limits": {
 			"cpu": "1000m",
-			"memory": "8G"
+			"memory": "4G"
 		},
 		"requests": {
 			"cpu": "500m",
